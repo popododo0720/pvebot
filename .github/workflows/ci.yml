@@ -32,3 +32,15 @@ jobs:
           go-version: "1.22"
       - name: Kind, Cilium, and the two-bot test
         run: bash hack/kind-ci.sh
+
+  integration-native:
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Kind, Cilium native routing, and the two-bot test
+        run: ROUTING_MODE=native bash hack/kind-ci.sh
