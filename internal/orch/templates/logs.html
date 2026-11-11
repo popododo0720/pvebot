@@ -1,0 +1,17 @@
+{{define "logs"}}
+{{template "head" .}}
+{{if not .Bot.Name}}
+<h1>Logs</h1>
+{{else}}
+<section class="bot-head">
+<h1>{{.Bot.Name}}</h1>
+<p class="{{phaseClass .Bot.Phase}}">{{.Bot.Phase}}</p>
+<nav class="tabs">
+<a href="/bots/{{.Bot.Name}}">Chat</a>
+<a href="/bots/{{.Bot.Name}}/logs" aria-current="page">Logs</a>
+</nav>
+</section>
+<pre id="logs">{{.Logs}}</pre>
+{{end}}
+{{template "foot" .}}
+{{end}}

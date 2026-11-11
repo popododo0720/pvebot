@@ -1,17 +1,105 @@
-:root { color-scheme: light dark; }
-body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; line-height: 1.45; }
-header { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1.25rem; border-bottom: 1px solid #8884; }
-.brand { font-weight: 700; text-decoration: none; }
-nav a { margin-left: 1rem; }
-main { max-width: 46rem; margin: 0 auto; padding: 1.25rem; }
-label { display: block; margin: 0.75rem 0; }
+:root { color-scheme: dark; }
+body {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  margin: 0;
+  line-height: 1.45;
+  background: #12140f;
+  color: #e7e4d8;
+}
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid #2a2e24;
+  background: #161910;
+  position: sticky;
+  top: 0;
+}
+.brand { font-weight: 700; color: #d6ff4a; text-decoration: none; letter-spacing: 0.02em; }
+nav a, .tabs a { color: #e7e4d8; margin-left: 1rem; }
+main { max-width: 72rem; margin: 0 auto; padding: 1.25rem; }
+h1, h2 { font-weight: 650; letter-spacing: -0.02em; }
+label { display: block; margin: 0.85rem 0; }
 input, select, textarea, button { font: inherit; }
-input, select, textarea { width: 100%; box-sizing: border-box; }
-button { margin-right: 0.5rem; }
-.bots { list-style: none; padding: 0; }
-.bots li { display: flex; gap: 1rem; padding: 0.4rem 0; border-bottom: 1px solid #8884; }
-.error { color: #b00020; }
-.relogin { color: #9a3412; font-weight: 700; }
-.reply { margin-left: 1rem; }
-.pending { margin-left: 1rem; opacity: 0.7; }
-pre { white-space: pre-wrap; background: #8881; padding: 0.75rem; }
+input, select, textarea {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 0.25rem;
+  padding: 0.45rem 0.55rem;
+  background: #0c0e0a;
+  color: inherit;
+  border: 1px solid #3a4030;
+  border-radius: 6px;
+}
+button {
+  background: #d6ff4a;
+  color: #12140f;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  cursor: pointer;
+}
+button.danger { background: transparent; color: #ff5a36; border: 1px solid #ff5a36; }
+.actions form { display: inline; }
+.actions { margin: 0.75rem 0 1rem; }
+.bots, .accounts { list-style: none; padding: 0; }
+.bots a {
+  display: grid;
+  grid-template-columns: 7rem 1fr auto auto auto;
+  gap: 0.75rem;
+  align-items: center;
+  text-decoration: none;
+  color: inherit;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #2a2e24;
+}
+.phase { font-size: 0.85rem; text-transform: lowercase; }
+.phase::before {
+  content: "";
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  margin-right: 0.4rem;
+  border-radius: 50%;
+  background: #8ab4ff;
+  vertical-align: 0.05em;
+}
+.phase-running::before { background: #7dff6a; }
+.phase-stopped::before { background: #8a8a8a; }
+.phase-pending::before { background: #f0c14a; }
+.phase-failed::before { background: #ff5a36; }
+.phase-unknown::before { background: #8ab4ff; }
+.error { color: #ff5a36; }
+.relogin { color: #ffb15a; font-weight: 700; }
+.hint, .empty, .meta, .pending { color: #9aa08c; }
+.split { display: grid; grid-template-columns: 1.4fr 0.8fr; gap: 1.5rem; align-items: start; }
+.transcript, .peers { list-style: none; padding: 0; margin: 0; }
+.transcript li, .peers li {
+  margin: 0.55rem 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  background: #1c1f18;
+}
+.transcript li[data-sender="user"] { margin-left: 18%; background: #243018; }
+.transcript li:not([data-sender="user"]) { margin-right: 18%; }
+.who { margin: 0; font-size: 0.8rem; color: #9aa08c; }
+.body, .reply { margin: 0.2rem 0 0; white-space: pre-wrap; }
+.reply { color: #f4f1e4; }
+#transcript { max-height: 28rem; overflow: auto; }
+pre {
+  white-space: pre-wrap;
+  background: #0c0e0a;
+  padding: 1rem;
+  border-radius: 8px;
+  max-height: 70vh;
+  overflow: auto;
+  font-family: ui-monospace, monospace;
+}
+:focus-visible { outline: 2px solid #d6ff4a; outline-offset: 2px; }
+@media (max-width: 800px) {
+  .split { grid-template-columns: 1fr; }
+  .bots a { grid-template-columns: 1fr 1fr; }
+  .transcript li[data-sender="user"],
+  .transcript li:not([data-sender="user"]) { margin-left: 0; margin-right: 0; }
+}

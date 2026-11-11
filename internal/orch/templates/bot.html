@@ -1,25 +1,69 @@
-{{define "bot"}}
-{{template "head" .}}
-<h1>{{.Bot.Name}}</h1>
-<p>{{.Bot.Phase}} · {{.Bot.Backend}} · {{if .Bot.Node}}{{.Bot.Node}}{{else}}any node{{end}}{{if eq .Bot.AuthState "needs_relogin"}} · <span class="relogin">needs re-login</span>{{end}}</p>
-<form method="post" action="/bots/{{.Bot.Name}}/start"><button type="submit">Start</button></form>
-<form method="post" action="/bots/{{.Bot.Name}}/stop"><button type="submit">Stop</button></form>
-<form method="post" action="/bots/{{.Bot.Name}}/delete"><button type="submit">Delete</button></form>
-<h2>Chat</h2>
+{{define "transcript"}}
 <ol class="transcript">
 {{range .Messages}}
-<li>
-<p><strong>{{.Sender}}</strong> {{.Body}}</p>
+<li class="msg" data-sender="{{.Sender}}">
+<p class="who">{{.Sender}}</p>
+<p class="body">{{.Body}}</p>
 {{if eq .Status "needs_relogin"}}<p class="relogin">needs re-login</p>{{end}}
 {{if .Reply}}<p class="reply">{{.Reply}}</p>{{else}}<p class="pending">{{.Status}}</p>{{end}}
 </li>
+{{else}}
+<li class="empty">No messages yet.</li>
 {{end}}
 </ol>
-<form method="post" action="/bots/{{.Bot.Name}}/message">
+{{end}}
+
+{{define "peers"}}
+<ol class="peers">
+{{range .Peers}}
+<li class="peer">
+<p class="who">{{.Sender}} to {{.Bot}}</p>
+<p class="body">{{.Body}}</p>
+{{if eq .Status "needs_relogin"}}<p class="relogin">needs re-login</p>{{end}}
+{{if .Reply}}<p class="reply">{{.Reply}}</p>{{end}}
+<p class="pending">{{.Status}}</p>
+</li>
+{{else}}
+<li class="empty">No bot-to-bot messages.</li>
+{{end}}
+</ol>
+{{end}}
+
+{{define "bot"}}
+{{template "head" .}}
+{{if not .Bot.Name}}
+<h1>Bot</h1>
+{{else}}
+<section class="bot-head">
+<h1>{{.Bot.Name}}</h1>
+<p id="phase" class="{{phaseClass .Bot.Phase}}">{{.Bot.Phase}}</p>
+<p class="meta">{{.Bot.Backend}} · {{if .Bot.Node}}{{.Bot.Node}}{{else}}any node{{end}}{{if .Bot.Account}} · {{.Bot.Account}}{{end}}{{if eq .Bot.AuthState "needs_relogin"}} · <span class="relogin">needs re-login</span>{{end}}</p>
+<nav class="tabs">
+<a href="/bots/{{.Bot.Name}}" aria-current="page">Chat</a>
+<a href="/bots/{{.Bot.Name}}/logs">Logs</a>
+</nav>
+<div class="actions">
+<form method="post" action="/bots/{{.Bot.Name}}/start"><button type="submit">Start</button></form>
+<form method="post" action="/bots/{{.Bot.Name}}/stop"><button type="submit">Stop</button></form>
+<form method="post" action="/bots/{{.Bot.Name}}/delete" onsubmit="return confirm('Delete this bot?')"><button type="submit" class="danger">Delete</button></form>
+</div>
+</section>
+<div class="split">
+<section>
+<h2>Chat</h2>
+<div id="transcript" aria-live="polite">{{template "transcript" .}}</div>
+<form id="composer" method="post" action="/bots/{{.Bot.Name}}/message">
 <label>Message <textarea name="body" rows="4" required></textarea></label>
 <button type="submit">Send</button>
 </form>
-<h2>Logs</h2>
-<pre>{{.Logs}}</pre>
+<noscript><p class="hint">Reload the page to see the reply.</p></noscript>
+</section>
+<section>
+<h2>Bot to bot</h2>
+<div id="peers">{{template "peers" .}}</div>
+</section>
+</div>
+<script src="/static/chat.js"></script>
+{{end}}
 {{template "foot" .}}
 {{end}}

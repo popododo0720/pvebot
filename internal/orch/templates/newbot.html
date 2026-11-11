@@ -1,26 +1,28 @@
 {{define "newbot"}}
 {{template "head" .}}
 <h1>New bot</h1>
+<p class="hint">Pick a schedulable node. An empty node lets the cluster place the pod.</p>
 <form method="post" action="/bots">
-<label>Name <input name="name" required pattern="[a-z]([-a-z0-9]*[a-z0-9])?" maxlength="40"></label>
+<label>Name <input name="name" required pattern="[a-z]([-a-z0-9]*[a-z0-9])?" maxlength="40" value="{{.Draft.Name}}"></label>
 <label>Node
 <select name="node">
-<option value="">Any node</option>
-{{range .Nodes}}<option value="{{.}}">{{.}}</option>{{end}}
+<option value="" {{if eq .Draft.Node ""}}selected{{end}}>Any node</option>
+{{range .Nodes}}<option value="{{.}}" {{if eq . $.Draft.Node}}selected{{end}}>{{.}}</option>{{end}}
 </select>
 </label>
+{{if not .Nodes}}<p class="hint">The cluster returned no schedulable nodes.</p>{{end}}
 <label>Backend
 <select name="backend">
-<option value="stub">stub</option>
-<option value="claude">claude</option>
-<option value="codex">codex</option>
-<option value="apikey">apikey</option>
+<option value="stub" {{if or (eq .Draft.Backend "") (eq .Draft.Backend "stub")}}selected{{end}}>stub</option>
+<option value="claude" {{if eq .Draft.Backend "claude"}}selected{{end}}>claude</option>
+<option value="codex" {{if eq .Draft.Backend "codex"}}selected{{end}}>codex</option>
+<option value="apikey" {{if eq .Draft.Backend "apikey"}}selected{{end}}>apikey</option>
 </select>
 </label>
 <label>Account
 <select name="account">
-<option value="">None</option>
-{{range .Accounts}}<option value="{{.Name}}">{{.Name}} ({{.Kind}})</option>{{end}}
+<option value="" {{if eq .Draft.Account ""}}selected{{end}}>None</option>
+{{range .Accounts}}<option value="{{.Name}}" {{if eq .Name $.Draft.Account}}selected{{end}}>{{.Name}} ({{.Kind}})</option>{{end}}
 </select>
 </label>
 <button type="submit">Create bot</button>

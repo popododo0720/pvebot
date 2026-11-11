@@ -54,6 +54,8 @@ func (h *Handler) routes() http.Handler {
 	mux.HandleFunc("GET /bots/new", h.web.newBot(h.svc))
 	mux.HandleFunc("POST /bots", h.web.createBot(h.svc))
 	mux.HandleFunc("GET /bots/{name}", h.web.bot(h.svc))
+	mux.HandleFunc("GET /bots/{name}/logs", h.web.logs(h.svc))
+	mux.HandleFunc("GET /bots/{name}/events", h.web.events(h.svc))
 	mux.HandleFunc("POST /bots/{name}/message", h.web.postMessage(h.svc))
 	mux.HandleFunc("POST /bots/{name}/start", h.web.start(h.svc))
 	mux.HandleFunc("POST /bots/{name}/stop", h.web.stop(h.svc))
