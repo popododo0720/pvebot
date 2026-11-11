@@ -11,6 +11,7 @@ button { margin-right: 0.5rem; }
 .bots { list-style: none; padding: 0; }
 .bots li { display: flex; gap: 1rem; padding: 0.4rem 0; border-bottom: 1px solid #8884; }
 .error { color: #b00020; }
+.relogin { color: #9a3412; font-weight: 700; }
 .reply { margin-left: 1rem; }
 .pending { margin-left: 1rem; opacity: 0.7; }
 pre { white-space: pre-wrap; background: #8881; padding: 0.75rem; }

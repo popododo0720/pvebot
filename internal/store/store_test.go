@@ -103,7 +103,17 @@ func TestBusClaimAndWait(t *testing.T) {
 		done <- msg
 	}()
 	time.Sleep(50 * time.Millisecond)
-	if err := s.Complete("a", id, "ack:hello", false); err != nil {
+	if err := s.AppendReply("a", id, "ack:"); err != nil {
+		t.Fatal(err)
+	}
+	partial, err := s.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if partial.Status != StatusRunning || partial.Reply != "ack:" {
+		t.Fatalf("partial = %+v", partial)
+	}
+	if err := s.Complete("a", id, "ack:hello", StatusDone); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -120,6 +130,49 @@ func TestBusClaimAndWait(t *testing.T) {
 	}
 	if _, err := s.BotByToken("nope"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("bad token err = %v", err)
+	}
+	bot, err := s.GetBot("a")
+	if err != nil || bot.AuthState != AuthOK {
+		t.Fatalf("auth state after success = %+v %v", bot, err)
+	}
+}
+
+func TestNeedsReloginUnblocksWait(t *testing.T) {
+	s := openTest(t)
+	if err := s.InsertBot(Bot{Name: "a", Backend: "claude", Node: "n1"}, "token-a"); err != nil {
+		t.Fatal(err)
+	}
+	id, err := s.Enqueue("a", "user", "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.Claim("a"); err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	done := make(chan Message, 1)
+	go func() {
+		msg, err := s.Wait(context.Background(), id)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		done <- msg
+	}()
+	time.Sleep(30 * time.Millisecond)
+	if err := s.Complete("a", id, "needs re-login: token expired", StatusNeedsRelogin); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case msg := <-done:
+		if msg.Status != StatusNeedsRelogin {
+			t.Fatalf("wait = %+v", msg)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("wait did not return")
+	}
+	bot, err := s.GetBot("a")
+	if err != nil || bot.AuthState != AuthNeedsRelogin {
+		t.Fatalf("auth state = %+v %v", bot, err)
 	}
 }
 

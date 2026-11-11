@@ -46,6 +46,7 @@ func (h *Handler) routes() http.Handler {
 	mux.HandleFunc("GET /api/bots/{name}/messages", h.listMessages)
 	mux.HandleFunc("POST /api/bots/{name}/messages", h.postMessage)
 	mux.HandleFunc("GET /api/bots/{name}/inbox", h.inbox)
+	mux.HandleFunc("POST /api/bots/{name}/inbox/{id}/log", h.logChunk)
 	mux.HandleFunc("POST /api/bots/{name}/inbox/{id}/result", h.result)
 	mux.HandleFunc("POST /mcp", h.mcp)
 	mux.Handle("GET /static/", h.web.static())
@@ -223,12 +224,40 @@ func (h *Handler) result(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Body   string `json:"body"`
 		Failed bool   `json:"failed"`
+		Status string `json:"status"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeErr(w, BadRequest{Msg: err.Error()})
 		return
 	}
-	if err := h.svc.Complete(bearer(r), id, req.Body, req.Failed); err != nil {
+	status := req.Status
+	if status == "" {
+		status = store.StatusDone
+		if req.Failed {
+			status = store.StatusError
+		}
+	}
+	if err := h.svc.Complete(bearer(r), id, req.Body, status); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) logChunk(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, BadRequest{Msg: "bad message id"})
+		return
+	}
+	var req struct {
+		Chunk string `json:"chunk"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeErr(w, BadRequest{Msg: err.Error()})
+		return
+	}
+	if err := h.svc.AppendLog(bearer(r), id, req.Chunk); err != nil {
 		writeErr(w, err)
 		return
 	}

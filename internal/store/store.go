@@ -22,10 +22,14 @@ import (
 )
 
 const (
-	StatusPending = "pending"
-	StatusRunning = "running"
-	StatusDone    = "done"
-	StatusError   = "error"
+	StatusPending      = "pending"
+	StatusRunning      = "running"
+	StatusDone         = "done"
+	StatusError        = "error"
+	StatusNeedsRelogin = "needs_relogin"
+
+	AuthOK           = "ok"
+	AuthNeedsRelogin = "needs_relogin"
 )
 
 // ErrNotFound means the row is absent.
@@ -42,19 +46,20 @@ type Account struct {
 
 // Bot records a bot. The token itself is not stored, only its hash.
 type Bot struct {
-	Name    string
-	Backend string
-	Node    string
-	Account string
+	Name      string
+	Backend   string
+	Node      string
+	Account   string
+	AuthState string
 }
 
 type Message struct {
-	ID     int64
-	Bot    string
-	Sender string
-	Body   string
-	Reply  string
-	Status string
+	ID     int64  `json:"id"`
+	Bot    string `json:"bot"`
+	Sender string `json:"sender"`
+	Body   string `json:"body"`
+	Reply  string `json:"reply"`
+	Status string `json:"status"`
 }
 
 // Store is safe for concurrent use.
@@ -113,7 +118,14 @@ CREATE TABLE IF NOT EXISTS messages (
   status TEXT NOT NULL
 );
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`ALTER TABLE bots ADD COLUMN auth_state TEXT NOT NULL DEFAULT 'ok'`)
+	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return err
+	}
+	return nil
 }
 
 // PutAccount encrypts secret and inserts the account.
@@ -195,7 +207,7 @@ func (s *Store) DeleteBot(name string) error {
 func (s *Store) Bots() ([]Bot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT name, backend, node, account FROM bots ORDER BY name`)
+	rows, err := s.db.Query(`SELECT name, backend, node, account, auth_state FROM bots ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +215,7 @@ func (s *Store) Bots() ([]Bot, error) {
 	var out []Bot
 	for rows.Next() {
 		var b Bot
-		if err := rows.Scan(&b.Name, &b.Backend, &b.Node, &b.Account); err != nil {
+		if err := rows.Scan(&b.Name, &b.Backend, &b.Node, &b.Account, &b.AuthState); err != nil {
 			return nil, err
 		}
 		out = append(out, b)
@@ -226,7 +238,7 @@ func (s *Store) GetBot(name string) (Bot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var b Bot
-	err := s.db.QueryRow(`SELECT name, backend, node, account FROM bots WHERE name=?`, name).Scan(&b.Name, &b.Backend, &b.Node, &b.Account)
+	err := s.db.QueryRow(`SELECT name, backend, node, account, auth_state FROM bots WHERE name=?`, name).Scan(&b.Name, &b.Backend, &b.Node, &b.Account, &b.AuthState)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Bot{}, ErrNotFound
 	}
@@ -273,13 +285,14 @@ func (s *Store) Claim(bot string) (Message, bool, error) {
 	return m, true, nil
 }
 
-func (s *Store) Complete(bot string, id int64, reply string, failed bool) error {
+func (s *Store) Complete(bot string, id int64, reply, status string) error {
+	switch status {
+	case StatusDone, StatusError, StatusNeedsRelogin:
+	default:
+		return fmt.Errorf("unknown message status %q", status)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	status := StatusDone
-	if failed {
-		status = StatusError
-	}
 	res, err := s.db.Exec(`UPDATE messages SET reply=?, status=? WHERE id=? AND bot=? AND status=?`, reply, status, id, bot, StatusRunning)
 	if err != nil {
 		return err
@@ -288,8 +301,42 @@ func (s *Store) Complete(bot string, id int64, reply string, failed bool) error 
 	if n != 1 {
 		return ErrNotFound
 	}
+	if status == StatusDone || status == StatusNeedsRelogin {
+		auth := AuthOK
+		if status == StatusNeedsRelogin {
+			auth = AuthNeedsRelogin
+		}
+		if _, err := s.db.Exec(`UPDATE bots SET auth_state=? WHERE name=?`, auth, bot); err != nil {
+			return err
+		}
+	}
 	s.cond.Broadcast()
 	return nil
+}
+
+func (s *Store) AppendReply(bot string, id int64, chunk string) error {
+	if chunk == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int
+	err := s.db.QueryRow(`SELECT length(reply) FROM messages WHERE id=? AND bot=? AND status=?`, id, bot, StatusRunning).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	const maxReply = 1 << 20
+	if n >= maxReply {
+		return nil
+	}
+	if n+len(chunk) > maxReply {
+		chunk = chunk[:maxReply-n]
+	}
+	_, err = s.db.Exec(`UPDATE messages SET reply = reply || ? WHERE id=? AND bot=? AND status=?`, chunk, id, bot, StatusRunning)
+	return err
 }
 
 func (s *Store) Get(id int64) (Message, error) {
@@ -343,7 +390,7 @@ func (s *Store) Wait(ctx context.Context, id int64) (Message, error) {
 		if err != nil {
 			return Message{}, err
 		}
-		if m.Status == StatusDone || m.Status == StatusError {
+		if m.Status == StatusDone || m.Status == StatusError || m.Status == StatusNeedsRelogin {
 			return m, nil
 		}
 		if ctx.Err() != nil {
