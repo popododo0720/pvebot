@@ -68,6 +68,13 @@ func TestCreateKataPodPolicyAndSecretRef(t *testing.T) {
 	if pod.RuntimeClassName == nil || *pod.RuntimeClassName != "kata" {
 		t.Fatalf("runtime class = %v", pod.RuntimeClassName)
 	}
+	probe := pod.Containers[0].ReadinessProbe
+	if probe == nil || probe.HTTPGet != nil || probe.Exec == nil {
+		t.Fatalf("readiness = %#v, want loopback exec", probe)
+	}
+	if got := strings.Join(probe.Exec.Command, " "); !strings.Contains(got, "http://127.0.0.1:8081/healthz") {
+		t.Fatalf("readiness command = %q", got)
+	}
 	if pod.NodeSelector["kubernetes.io/hostname"] != "worker-1" {
 		t.Fatalf("nodeSelector = %v", pod.NodeSelector)
 	}

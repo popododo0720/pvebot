@@ -26,7 +26,7 @@ The node chosen in the UI becomes `nodeSelector` `kubernetes.io/hostname`. An em
 
 ## Network
 
-Cilium is part of the platform, not an optional addon. The FQDN rules are a CiliumNetworkPolicy `toFQDNs` list. A Kubernetes NetworkPolicy cannot name a host. The default list is `api.anthropic.com`, `github.com`, `api.openai.com`, `auth.openai.com`, and `chatgpt.com`. With at least one policy selecting the pod, everything else is denied, including another bot's pod IP. The kind test checks that denial with `wget` from bot A to bot B's port 8081, and checks that bot A can still read the orchestrator `/healthz`.
+Cilium is part of the platform, not an optional addon. The FQDN rules are a CiliumNetworkPolicy `toFQDNs` list. A Kubernetes NetworkPolicy cannot name a host. The default list is `api.anthropic.com`, `github.com`, `api.openai.com`, `auth.openai.com`, and `chatgpt.com`. With at least one policy selecting the pod, everything else is denied, including another bot's pod IP. The kind test checks that denial with `wget` from bot A to bot B's port 8081, and checks that bot A can still read the orchestrator `/healthz`. The same test runs once with Cilium's default tunnel and once with `routingMode=native` on a single node. The bot readiness probe is `wget` to `127.0.0.1:8081`. Under native routing, a kubelet HTTP probe is a packet from the node's `cilium_host` address with identity `world`, and an ingress rule for `host` or the node CIDR does not match it.
 
 ## Credentials
 

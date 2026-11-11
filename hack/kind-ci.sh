@@ -10,6 +10,7 @@ KUBECTL_VERSION="${KUBECTL_VERSION:-v1.31.4}"
 HELM_VERSION="${HELM_VERSION:-v3.16.4}"
 CILIUM_VERSION="${CILIUM_VERSION:-1.16.5}"
 NODE_IMAGE="${NODE_IMAGE:-kindest/node:v1.31.4}"
+ROUTING_MODE="${ROUTING_MODE:-tunnel}"
 
 install_tool() {
   local name="$1"
@@ -32,7 +33,19 @@ if ! install_tool helm; then
 fi
 
 kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
-kind create cluster --name "$CLUSTER" --image "$NODE_IMAGE" --config - <<EOF
+if [[ "$ROUTING_MODE" == native ]]; then
+  kind create cluster --name "$CLUSTER" --image "$NODE_IMAGE" --config - <<EOF
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true
+  kubeProxyMode: none
+  podSubnet: 10.244.0.0/16
+nodes:
+  - role: control-plane
+EOF
+else
+  kind create cluster --name "$CLUSTER" --image "$NODE_IMAGE" --config - <<EOF
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
@@ -42,18 +55,31 @@ networking:
   disableDefaultCNI: true
   kubeProxyMode: none
 EOF
+fi
 
 kubectl config use-context "kind-${CLUSTER}"
+if [[ "$ROUTING_MODE" == native ]]; then
+  kubectl taint nodes --all node-role.kubernetes.io/control-plane:NoSchedule- >/dev/null 2>&1 || true
+fi
 CP="$(kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep control-plane | head -n1)"
 HOST="$(kubectl get node "$CP" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')"
 helm repo add cilium https://helm.cilium.io/
 helm repo update cilium
+CILIUM_ROUTING=()
+if [[ "$ROUTING_MODE" == native ]]; then
+  CILIUM_ROUTING=(
+    --set routingMode=native
+    --set autoDirectNodeRoutes=true
+    --set ipv4NativeRoutingCIDR=10.244.0.0/16
+  )
+fi
 helm upgrade --install cilium cilium/cilium --version "$CILIUM_VERSION" \
   --namespace kube-system \
   --set operator.replicas=1 \
   --set kubeProxyReplacement=true \
   --set k8sServiceHost="$HOST" \
   --set k8sServicePort=6443 \
+  "${CILIUM_ROUTING[@]}" \
   --wait --timeout 6m
 
 kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.30/deploy/local-path-storage.yaml
