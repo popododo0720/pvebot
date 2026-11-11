@@ -13,14 +13,7 @@ docker build -t pvebot-orchestrator:dev -f images/orchestrator/Dockerfile .
 docker build -t pvebot-bot:dev -f images/bot/Dockerfile .
 ```
 
-The bot image runs `botd` and `wget`. It does not contain `claude` or `codex`. To use those CLIs, build a second image that puts both binaries on `PATH`:
-
-```dockerfile
-FROM pvebot-bot:dev
-USER root
-```
-
-Install `claude` and `codex` on `PATH` in that image. Claude authentication is documented at https://code.claude.com/docs/en/authentication . Codex authentication is documented at https://learn.chatgpt.com/docs/auth .
+The bot image runs `botd` and `wget`. It also installs `claude` and `codex`. The versions are the `CLAUDE_CODE_VERSION` and `CODEX_VERSION` build arguments in `images/bot/Dockerfile`.
 
 Push both images somewhere the nodes can pull, or load them the way your cluster expects. The commands below use the tag `pvebot-bot:dev` and `pvebot-orchestrator:dev` with `IfNotPresent`.
 
@@ -111,27 +104,73 @@ kubectl -n pvebot exec bot-a-0 -- wget -q -T 10 -O - https://api.anthropic.com/
 
 A TLS or HTTP response means the FQDN rule allowed the dial. A timeout means the policy or the cluster DNS path is wrong.
 
-## Claude and Codex
+## Log in to Claude
 
-Create the account in the UI or with curl. The secret is the token from `claude setup-token`, the contents of `~/.codex/auth.json` after `codex login --device-auth`, or an API key.
+On a machine with a browser, run `claude setup-token`. The command prints a token. Paste that token as the account secret. The bot image already contains `claude`.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/api/accounts -H 'content-type: application/json' \
   -d '{"name":"claude-main","kind":"claude","secret":"REPLACE"}'
 curl -s -X POST http://127.0.0.1:8080/api/bots -H 'content-type: application/json' \
   -d "{\"name\":\"coder\",\"node\":\"$NODE\",\"backend\":\"claude\",\"account\":\"claude-main\"}"
+kubectl -n pvebot rollout status statefulset/bot-coder --timeout=180s
 ```
 
-Use the image that contains `claude`. Then post a normal prompt, not a `SEND` line.
+Post a normal prompt, not a `SEND` line.
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/api/bots/coder/messages -H 'content-type: application/json' \
   -d '{"body":"Reply with the single word pong."}'
+```
+
+Poll the transcript until `"status"` is `done`. The `"reply"` is the model text. While `"status"` is `running`, `"reply"` grows with each line from the CLI. The same lines are in the pod log.
+
+```bash
 kubectl -n pvebot logs bot-coder-0
 curl -s http://127.0.0.1:8080/api/bots/coder/messages
 ```
 
-Codex is the same flow with `"kind":"codex"` and `"backend":"codex"`. The pod log should show `codex exec` rather than an exec format error. If Codex rejects `--skip-git-repo-check` on your CLI version, that flag is the line to change in `internal/runtime/runtime.go`.
+The bot page at http://127.0.0.1:8080/bots/coder shows the same transcript.
+
+## Log in to Codex
+
+On a machine with a browser, run `codex login --device-auth`. Paste the contents of `~/.codex/auth.json` as the account secret. The bot image already contains `codex`.
+
+Use the Claude commands above with `"kind":"codex"`, `"backend":"codex"`, and a different bot name. The daemon runs `codex exec --skip-git-repo-check`. The pod log shows the CLI output, not an exec format error.
+
+## See a dead login
+
+Create a Claude account whose secret is not a token from `claude setup-token`. Create a bot on that account and post a prompt.
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/api/accounts -H 'content-type: application/json' \
+  -d '{"name":"claude-bad","kind":"claude","secret":"not-a-token"}'
+curl -s -X POST http://127.0.0.1:8080/api/bots -H 'content-type: application/json' \
+  -d "{\"name\":\"stale\",\"node\":\"$NODE\",\"backend\":\"claude\",\"account\":\"claude-bad\"}"
+kubectl -n pvebot rollout status statefulset/bot-stale --timeout=180s
+curl -s -X POST http://127.0.0.1:8080/api/bots/stale/messages -H 'content-type: application/json' \
+  -d '{"body":"Reply with the single word pong."}'
+sleep 15
+curl -s http://127.0.0.1:8080/api/bots/stale
+curl -s http://127.0.0.1:8080/api/bots/stale/messages
+```
+
+`GET /api/bots/stale` has `"authState":"needs_relogin"`. The message `"status"` is `needs_relogin`, not `running`. The bot page and the bot list show **needs re-login**.
+
+A run that never exits becomes `"status":"error"` with `"reply":"backend timed out"`. The daemon waits 10 minutes (`PVEBOT_RUN_TIMEOUT`).
+
+The account secret is copied into the pod when the bot is created. To replace a dead token, create a new account with a fresh `claude setup-token` or `auth.json`, delete the bot, and create it again.
+
+## Ask Claude to message another bot
+
+Create the stub bot `b` from the stub section, and a Claude bot `a` with a real token. Post this prompt to `a`:
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/api/bots/a/messages -H 'content-type: application/json' \
+  -d '{"body":"Use the pvebot MCP tool send_to_agent. The agent is b. The text is hello from claude."}'
+```
+
+Bot `b` transcript has sender `a` and body `hello from claude`. Bot `a` reply includes `b`'s `ack:` answer. The CLI sees that tool because the daemon writes `/workspace/.mcp.json` for Claude and `config.toml` for Codex. The tool command is `botd mcp-proxy`.
 
 Stop, start, and delete from the bot page, or:
 
