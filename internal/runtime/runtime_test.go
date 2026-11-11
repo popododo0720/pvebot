@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -61,29 +62,45 @@ func TestCLIAckAndSend(t *testing.T) {
 
 func TestClaudeAndCodexCommands(t *testing.T) {
 	dir := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("PATH", dir)
-	writeExe(t, filepath.Join(dir, "claude"), "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$HOME/claude-args\"\nprintf 'claude:%s' \"$2\"\n")
-	writeExe(t, filepath.Join(dir, "codex"), "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$HOME/codex-args\"\nprintf 'codex:%s' \"$3\"\n")
+	t.Setenv("PATH", dir+":/bin:/usr/bin")
+	const token = "oauth-token-value"
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", token)
+	writeExe(t, filepath.Join(dir, "claude"), "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$HOME/claude-args\"\nprintf '%s' \"$CLAUDE_CODE_OAUTH_TOKEN\" > \"$HOME/claude-token\"\nprintf 'claude:%s' \"$2\"\n")
+	writeExe(t, filepath.Join(dir, "codex"), "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$HOME/codex-args\"\nprintf seen > \"$HOME/.codex/seen\"\nprintf 'codex:%s' \"$3\"\n")
 	authSrc := filepath.Join(dir, "auth.json")
 	if err := os.WriteFile(authSrc, []byte(`{"access_token":"x"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	workdir := t.TempDir()
 	cfg := Config{
 		BotID: "a", Token: "t", OrchestratorURL: "http://orch", Backend: "claude",
-		Workdir: t.TempDir(), Client: http.DefaultClient,
+		Workdir: workdir, Client: http.DefaultClient,
 	}
 	out, err := Execute(context.Background(), cfg, "fix the tests")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "claude:fix the tests" {
+	if out != "claude:fix the tests" || strings.Contains(out, token) {
 		t.Fatalf("claude out = %q", out)
 	}
-	args, _ := os.ReadFile(filepath.Join(home, "claude-args"))
-	if !strings.Contains(string(args), "-p fix the tests") {
+	home := filepath.Join(workdir, ".home")
+	args, err := os.ReadFile(filepath.Join(home, "claude-args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "-p fix the tests") || !strings.Contains(string(args), "--permission-mode bypassPermissions") {
 		t.Fatalf("claude args = %q", args)
+	}
+	gotToken, err := os.ReadFile(filepath.Join(home, "claude-token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotToken) != token {
+		t.Fatalf("claude token env = %q", gotToken)
+	}
+	mcp, err := os.ReadFile(filepath.Join(workdir, ".mcp.json"))
+	if err != nil || !strings.Contains(string(mcp), "mcp-proxy") {
+		t.Fatalf("claude mcp = %s %v", mcp, err)
 	}
 	cfg.Backend = "codex"
 	cfg.CodexAuthFile = authSrc
@@ -94,20 +111,212 @@ func TestClaudeAndCodexCommands(t *testing.T) {
 	if out != "codex:review the diff" {
 		t.Fatalf("codex out = %q", out)
 	}
-	copied, err := os.ReadFile(filepath.Join(home, ".codex", "auth.json"))
+	authPath := filepath.Join(home, ".codex", "auth.json")
+	copied, err := os.ReadFile(authPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(copied) != `{"access_token":"x"}` {
 		t.Fatalf("copied auth = %s", copied)
 	}
-	info, err := os.Stat(filepath.Join(home, ".codex", "auth.json"))
+	info, err := os.Stat(authPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("auth mode = %o", info.Mode().Perm())
 	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "seen")); err != nil {
+		t.Fatalf("codex home: %v", err)
+	}
+	conf, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(conf), "mcp-proxy") || !strings.Contains(string(conf), `cli_auth_credentials_store = "file"`) {
+		t.Fatalf("codex config = %s", conf)
+	}
+}
+
+func TestAuthExpiredAndMissingCredentials(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+":/bin:/usr/bin")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-token-value")
+	writeExe(t, filepath.Join(dir, "claude"), "#!/bin/sh\necho 'not logged in · run claude setup-token' >&2\nexit 1\n")
+	writeExe(t, filepath.Join(dir, "codex"), "#!/bin/sh\necho 'refresh token expired' >&2\nexit 1\n")
+	cfg := Config{
+		BotID: "a", Token: "t", OrchestratorURL: "http://orch", Backend: "claude",
+		Workdir: t.TempDir(), Client: http.DefaultClient,
+	}
+	_, err := Execute(context.Background(), cfg, "hello")
+	if err == nil || !strings.Contains(err.Error(), "needs re-login") || !strings.Contains(err.Error(), "setup-token") {
+		t.Fatalf("claude auth err = %v", err)
+	}
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+	start := time.Now()
+	_, err = Execute(context.Background(), cfg, "hello")
+	if err == nil || !strings.Contains(err.Error(), "needs re-login") || !strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Fatalf("missing token err = %v", err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatalf("missing token hung for %s", time.Since(start))
+	}
+	cfg.Backend = "codex"
+	cfg.CodexAuthFile = filepath.Join(dir, "missing-auth.json")
+	_, err = Execute(context.Background(), cfg, "hello")
+	if err == nil || !strings.Contains(err.Error(), "needs re-login") || !strings.Contains(err.Error(), "auth.json") {
+		t.Fatalf("missing auth err = %v", err)
+	}
+	if err := os.WriteFile(cfg.CodexAuthFile, []byte(`{"refresh_token":"stale"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Execute(context.Background(), cfg, "hello")
+	if err == nil || !strings.Contains(err.Error(), "needs re-login") || !strings.Contains(err.Error(), "refresh token expired") {
+		t.Fatalf("codex auth err = %v", err)
+	}
+}
+
+func TestBackendTimeout(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+":/bin:/usr/bin")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-token-value")
+	writeExe(t, filepath.Join(dir, "claude"), "#!/bin/sh\nprintf 'still working\\n'\n/bin/sleep 5\n")
+	cfg := Config{
+		BotID: "a", Token: "t", OrchestratorURL: "http://orch", Backend: "claude",
+		Workdir: t.TempDir(), RunTimeout: 300 * time.Millisecond, Client: http.DefaultClient,
+	}
+	var lines []string
+	cfg.OnOutput = func(chunk string) { lines = append(lines, chunk) }
+	start := time.Now()
+	_, err := Execute(context.Background(), cfg, "hello")
+	elapsed := time.Since(start)
+	if err == nil || !strings.Contains(err.Error(), "backend timed out") {
+		t.Fatalf("timeout err = %v", err)
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("timeout hung for %s", elapsed)
+	}
+	if !strings.Contains(strings.Join(lines, ""), "still working") {
+		t.Fatalf("streamed lines = %q", lines)
+	}
+}
+
+func TestNeedsReloginSurfacesInAPI(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+":/bin:/usr/bin")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-token-value")
+	writeExe(t, filepath.Join(dir, "claude"), "#!/bin/sh\necho 'token expired' >&2\nexit 1\n")
+	st, err := store.Open(filepath.Join(t.TempDir(), "pvebot.db"), bytes32())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := httptest.NewServer(orch.NewHandler(&orch.Service{Store: st, Host: &memHost{}, Timeout: 8 * time.Second}))
+	defer srv.Close()
+	postJSON(t, srv.URL+"/api/accounts", `{"name":"main","kind":"claude","secret":"oauth-token-value"}`)
+	token := createAccountedBot(t, srv.URL, "coder", "claude", "main")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errc := make(chan error, 1)
+	go func() {
+		errc <- Run(ctx, Config{
+			BotID: "coder", Token: token, OrchestratorURL: srv.URL, Backend: "claude",
+			Workdir: t.TempDir(), Client: srv.Client(),
+		})
+	}()
+	postMessage(t, srv.URL, "coder", "Reply with pong.")
+	deadline := time.Now().Add(8 * time.Second)
+	var status, reply string
+	for time.Now().Before(deadline) {
+		msgs := getMessages(t, srv.URL, "coder")
+		if len(msgs) == 1 && msgs[0].Status != "running" && msgs[0].Status != "pending" {
+			status = msgs[0].Status
+			reply = msgs[0].Reply
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	if status != "needs_relogin" || !strings.Contains(reply, "needs re-login") {
+		t.Fatalf("status=%q reply=%q", status, reply)
+	}
+	view := getJSON(t, srv.URL+"/api/bots/coder")
+	if view["authState"] != "needs_relogin" {
+		t.Fatalf("bot = %v", view)
+	}
+	page := getText(t, srv.URL+"/bots/coder")
+	if !strings.Contains(page, "needs re-login") {
+		t.Fatalf("bot page missing needs re-login: %s", page)
+	}
+	index := getText(t, srv.URL+"/")
+	if !strings.Contains(index, "needs re-login") {
+		t.Fatalf("index missing needs re-login: %s", index)
+	}
+	cancel()
+	select {
+	case err := <-errc:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("daemon did not stop")
+	}
+}
+
+func TestClaudeStreamReachesTranscript(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir+":/bin:/usr/bin")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-token-value")
+	writeExe(t, filepath.Join(dir, "claude"), "#!/bin/sh\nprintf 'partial-line\\n'\nwhile [ ! -f \"$HOME/go\" ]; do /bin/sleep 0.05; done\nprintf 'final-line\\n'\n")
+	st, err := store.Open(filepath.Join(t.TempDir(), "pvebot.db"), bytes32())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := httptest.NewServer(orch.NewHandler(&orch.Service{Store: st, Host: &memHost{}}))
+	defer srv.Close()
+	postJSON(t, srv.URL+"/api/accounts", `{"name":"main","kind":"claude","secret":"oauth-token-value"}`)
+	token := createAccountedBot(t, srv.URL, "coder", "claude", "main")
+	workdir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = Run(ctx, Config{
+			BotID: "coder", Token: token, OrchestratorURL: srv.URL, Backend: "claude",
+			Workdir: workdir, RunTimeout: 15 * time.Second, Client: srv.Client(),
+		})
+	}()
+	postMessage(t, srv.URL, "coder", "stream please")
+	deadline := time.Now().Add(8 * time.Second)
+	sawPartial := false
+	for time.Now().Before(deadline) {
+		msgs := getMessages(t, srv.URL, "coder")
+		if len(msgs) == 1 && strings.Contains(msgs[0].Reply, "partial-line") && msgs[0].Status == "running" {
+			sawPartial = true
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	if !sawPartial {
+		t.Fatalf("transcript did not stream: %+v", getMessages(t, srv.URL, "coder"))
+	}
+	if err := os.WriteFile(filepath.Join(workdir, ".home", "go"), []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(8 * time.Second)
+	var reply, status string
+	for time.Now().Before(deadline) {
+		msgs := getMessages(t, srv.URL, "coder")
+		if len(msgs) == 1 && msgs[0].Status == "done" {
+			reply = msgs[0].Reply
+			status = msgs[0].Status
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	if status != "done" || !strings.Contains(reply, "partial-line") || !strings.Contains(reply, "final-line") {
+		t.Fatalf("final status=%q reply=%q", status, reply)
+	}
+	cancel()
 }
 
 func TestAPIKeyBackend(t *testing.T) {
@@ -136,6 +345,16 @@ func TestAPIKeyBackend(t *testing.T) {
 	}
 	if out != "api-reply" || auth != "Bearer sk-test" || !strings.Contains(body, "hello api") || !strings.Contains(body, "test-model") {
 		t.Fatalf("out=%q auth=%s body=%s", out, auth, body)
+	}
+	denied := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer denied.Close()
+	cfg.APIBase = denied.URL
+	cfg.Client = denied.Client()
+	_, err = Execute(context.Background(), cfg, "hello api")
+	if err == nil || !strings.Contains(err.Error(), "needs re-login") {
+		t.Fatalf("api auth err = %v", err)
 	}
 }
 
@@ -317,6 +536,38 @@ func (m *memHost) Delete(_ context.Context, name string) error {
 func (m *memHost) Logs(context.Context, string, int64) (string, error) { return "log-line", nil }
 func (m *memHost) ListNodes(context.Context) ([]string, error) {
 	return []string{"worker-1"}, nil
+}
+
+func createAccountedBot(t *testing.T, base, name, backend, account string) string {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]string{"name": name, "backend": backend, "account": account})
+	resp := postJSON(t, base+"/api/bots", string(raw))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		buf, _ := io.ReadAll(resp.Body)
+		t.Fatalf("create %s status %d: %s", name, resp.StatusCode, buf)
+	}
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Token
+}
+
+func getJSON(t *testing.T, url string) map[string]any {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 func createBot(t *testing.T, base, name, node string) string {
