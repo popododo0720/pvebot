@@ -1,7 +1,7 @@
 {{define "bot"}}
 {{template "head" .}}
 <h1>{{.Bot.Name}}</h1>
-<p>{{.Bot.Phase}} · {{.Bot.Backend}} · {{if .Bot.Node}}{{.Bot.Node}}{{else}}any node{{end}}</p>
+<p>{{.Bot.Phase}} · {{.Bot.Backend}} · {{if .Bot.Node}}{{.Bot.Node}}{{else}}any node{{end}}{{if eq .Bot.AuthState "needs_relogin"}} · <span class="relogin">needs re-login</span>{{end}}</p>
 <form method="post" action="/bots/{{.Bot.Name}}/start"><button type="submit">Start</button></form>
 <form method="post" action="/bots/{{.Bot.Name}}/stop"><button type="submit">Stop</button></form>
 <form method="post" action="/bots/{{.Bot.Name}}/delete"><button type="submit">Delete</button></form>
@@ -10,6 +10,7 @@
 {{range .Messages}}
 <li>
 <p><strong>{{.Sender}}</strong> {{.Body}}</p>
+{{if eq .Status "needs_relogin"}}<p class="relogin">needs re-login</p>{{end}}
 {{if .Reply}}<p class="reply">{{.Reply}}</p>{{else}}<p class="pending">{{.Status}}</p>{{end}}
 </li>
 {{end}}

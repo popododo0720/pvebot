@@ -25,11 +25,12 @@ type Service struct {
 }
 
 type BotView struct {
-	Name    string `json:"name"`
-	Backend string `json:"backend"`
-	Node    string `json:"node"`
-	Phase   string `json:"phase"`
-	Account string `json:"account"`
+	Name      string `json:"name"`
+	Backend   string `json:"backend"`
+	Node      string `json:"node"`
+	Phase     string `json:"phase"`
+	Account   string `json:"account"`
+	AuthState string `json:"authState"`
 }
 
 var nameRE = regexp.MustCompile(`^[a-z]([-a-z0-9]*[a-z0-9])?$`)
@@ -139,7 +140,11 @@ func (s *Service) Get(ctx context.Context, name string) (BotView, error) {
 }
 
 func (s *Service) view(ctx context.Context, b store.Bot) BotView {
-	v := BotView{Name: b.Name, Backend: b.Backend, Node: b.Node, Phase: "unknown", Account: b.Account}
+	auth := b.AuthState
+	if auth == "" {
+		auth = store.AuthOK
+	}
+	v := BotView{Name: b.Name, Backend: b.Backend, Node: b.Node, Phase: "unknown", Account: b.Account, AuthState: auth}
 	st, err := s.Host.Status(ctx, b.Name)
 	if err == nil {
 		v.Phase = st.Phase
@@ -202,12 +207,20 @@ func (s *Service) Inbox(token string) (store.Message, bool, error) {
 	return s.Store.Claim(name)
 }
 
-func (s *Service) Complete(token string, id int64, reply string, failed bool) error {
+func (s *Service) Complete(token string, id int64, reply, status string) error {
 	name, err := s.Store.BotByToken(token)
 	if err != nil {
 		return err
 	}
-	return s.Store.Complete(name, id, reply, failed)
+	return s.Store.Complete(name, id, reply, status)
+}
+
+func (s *Service) AppendLog(token string, id int64, chunk string) error {
+	name, err := s.Store.BotByToken(token)
+	if err != nil {
+		return err
+	}
+	return s.Store.AppendReply(name, id, chunk)
 }
 
 // SendToAgent delivers text to another bot and waits for that bot's reply.
@@ -235,7 +248,7 @@ func (s *Service) SendToAgent(ctx context.Context, from, to, text string) (strin
 	if err != nil {
 		return "", err
 	}
-	if msg.Status == store.StatusError {
+	if msg.Status == store.StatusError || msg.Status == store.StatusNeedsRelogin {
 		return "", errors.New(msg.Reply)
 	}
 	return msg.Reply, nil

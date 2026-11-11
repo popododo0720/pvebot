@@ -8,6 +8,7 @@
 <a href="/bots/{{.Name}}"><strong>{{.Name}}</strong></a>
 <span>{{.Phase}}</span>
 <span>{{.Backend}}</span>
+{{if eq .AuthState "needs_relogin"}}<span class="relogin">needs re-login</span>{{end}}
 <span>{{if .Node}}{{.Node}}{{else}}any node{{end}}</span>
 </li>
 {{end}}
