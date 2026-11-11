@@ -1,0 +1,22 @@
+image:
+  orchestrator: pvebot-orchestrator:dev
+  bot: pvebot-bot:dev
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+runtimeClassName: ""
+
+storageClass: ""
+storageSize: 1Gi
+
+masterKey: ""
+
+egressFQDNs:
+  - api.anthropic.com
+  - github.com
+  - api.openai.com
+  - auth.openai.com
+  - chatgpt.com
