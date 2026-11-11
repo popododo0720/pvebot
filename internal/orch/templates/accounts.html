@@ -1,20 +1,21 @@
 {{define "accounts"}}
 {{template "head" .}}
 <h1>Accounts</h1>
-<p>Paste a Claude setup token, a Codex auth.json, or an API key. The orchestrator stores it encrypted and injects it into the bot Secret.</p>
-<ul>
-{{range .Accounts}}<li>{{.Name}} <span>{{.Kind}}</span></li>{{end}}
+<p class="hint">Paste a Claude setup token, a Codex auth.json, or an API key. The orchestrator stores it encrypted. This page lists the name and the kind only.</p>
+{{if not .Accounts}}<p class="empty">No accounts yet.</p>{{end}}
+<ul class="accounts">
+{{range .Accounts}}<li><strong>{{.Name}}</strong> <span>{{.Kind}}</span></li>{{end}}
 </ul>
 <form method="post" action="/accounts">
-<label>Name <input name="name" required pattern="[a-z]([-a-z0-9]*[a-z0-9])?" maxlength="40"></label>
+<label>Name <input name="name" required pattern="[a-z]([-a-z0-9]*[a-z0-9])?" maxlength="40" value="{{.Draft.Name}}"></label>
 <label>Kind
 <select name="kind">
-<option value="claude">claude</option>
-<option value="codex">codex</option>
-<option value="apikey">apikey</option>
+<option value="claude" {{if or (eq .Draft.Kind "") (eq .Draft.Kind "claude")}}selected{{end}}>claude</option>
+<option value="codex" {{if eq .Draft.Kind "codex"}}selected{{end}}>codex</option>
+<option value="apikey" {{if eq .Draft.Kind "apikey"}}selected{{end}}>apikey</option>
 </select>
 </label>
-<label>Secret <textarea name="secret" rows="8" required></textarea></label>
+<label>Secret <textarea name="secret" rows="8" required autocomplete="off" spellcheck="false"></textarea></label>
 <button type="submit">Save account</button>
 </form>
 {{template "foot" .}}

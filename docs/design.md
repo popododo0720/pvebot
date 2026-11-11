@@ -63,7 +63,7 @@ Two bots therefore talk only through the orchestrator. The network policy is wha
 
 ## Web UI
 
-`GET /` lists bots. `GET /bots/new` is the create form, with a node menu and an account menu. `GET /accounts` saves a pasted token or `auth.json`. `GET /bots/{name}` shows phase, a chat form, the transcript, and the pod log. The bot page refreshes every three seconds so a reply shows up after the daemon finishes. There is no login on this process.
+`GET /` lists bots and reloads every three seconds so the phase stays current. `GET /bots/new` is the create form. The node menu is the schedulable nodes from the cluster, and the backend menu is `stub`, `claude`, `codex`, or `apikey`. `GET /accounts` saves a pasted token or `auth.json`. The HTML lists the account name and kind and does not contain the secret. `GET /bots/{name}` shows phase, start, stop, delete, the chat, and bot-to-bot messages. `GET /bots/{name}/events` streams that transcript as server-sent events. Reply text appears as the daemon appends it, and a dead login shows needs re-login on the list and on the bot page. `GET /bots/{name}/logs` is the pod log and reloads on the same three-second timer. There is no login on this process.
 
 ## Stages and proof
 

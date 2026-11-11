@@ -192,6 +192,13 @@ func (s *Service) Messages(name string) ([]store.Message, error) {
 	return s.Store.Messages(name)
 }
 
+func (s *Service) Involving(name string) ([]store.Message, error) {
+	if _, err := s.Store.GetBot(name); err != nil {
+		return nil, err
+	}
+	return s.Store.Involving(name)
+}
+
 func (s *Service) Logs(ctx context.Context, name string) (string, error) {
 	if _, err := s.Store.GetBot(name); err != nil {
 		return "", err

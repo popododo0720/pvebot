@@ -79,7 +79,7 @@ curl -s http://127.0.0.1:8080/api/bots/a/messages
 
 The last message has `"reply":"ack:hello"`. Bot B's transcript has sender `a` and body `hello`.
 
-The UI shows the same transcript at http://127.0.0.1:8080/bots/a .
+The UI shows the same transcript at http://127.0.0.1:8080/bots/a . The page streams the reply when the daemon posts it. Pod logs are at http://127.0.0.1:8080/bots/a/logs .
 
 ## Network policy
 

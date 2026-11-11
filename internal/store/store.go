@@ -357,9 +357,18 @@ func (s *Store) get(id int64) (Message, error) {
 
 // Messages lists the transcript for a bot, oldest first.
 func (s *Store) Messages(bot string) ([]Message, error) {
+	return s.queryMessages(`SELECT id, bot, sender, body, reply, status FROM messages WHERE bot=? ORDER BY id`, bot)
+}
+
+// Involving lists messages addressed to name or sent by name, oldest first.
+func (s *Store) Involving(name string) ([]Message, error) {
+	return s.queryMessages(`SELECT id, bot, sender, body, reply, status FROM messages WHERE bot=? OR sender=? ORDER BY id`, name, name)
+}
+
+func (s *Store) queryMessages(q string, args ...any) ([]Message, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.Query(`SELECT id, bot, sender, body, reply, status FROM messages WHERE bot=? ORDER BY id`, bot)
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

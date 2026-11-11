@@ -1,15 +1,17 @@
 {{define "index"}}
 {{template "head" .}}
 <h1>Bots</h1>
-{{if not .Bots}}<p>No bots yet.</p>{{end}}
+{{if not .Bots}}<p class="empty">No bots yet.</p>{{end}}
 <ul class="bots">
 {{range .Bots}}
 <li>
-<a href="/bots/{{.Name}}"><strong>{{.Name}}</strong></a>
-<span>{{.Phase}}</span>
+<a href="/bots/{{.Name}}">
+<span class="{{phaseClass .Phase}}">{{.Phase}}</span>
+<strong>{{.Name}}</strong>
 <span>{{.Backend}}</span>
 {{if eq .AuthState "needs_relogin"}}<span class="relogin">needs re-login</span>{{end}}
 <span>{{if .Node}}{{.Node}}{{else}}any node{{end}}</span>
+</a>
 </li>
 {{end}}
 </ul>
