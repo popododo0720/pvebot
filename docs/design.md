@@ -53,7 +53,7 @@ An empty Claude token, a missing Codex `auth.json`, or CLI output that says the 
 
 The stub command is `botd cli`. A prompt prints `ack:` plus the prompt. A prompt of the form `SEND <agent> <text>` calls `send_to_agent` on the orchestrator. The kind test uses that sentence so the proof does not need a real model.
 
-On startup the daemon writes `/workspace/.mcp.json` and `$PVEBOT_WORKDIR/.home/.codex/config.toml`. Both name a stdio server whose command is `botd mcp-proxy`. The proxy posts each JSON-RPC line to `/mcp` with the bot token. Claude Code and Codex, started in that workspace, can call the same tool the stub calls.
+On startup the daemon writes `/workspace/.mcp.json`, `/workspace/.claude/settings.local.json`, and `$PVEBOT_WORKDIR/.home/.codex/config.toml`. Both MCP configs name a stdio server whose command is `botd mcp-proxy`. The Codex config lists `PVEBOT_ORCHESTRATOR_URL` and `PVEBOT_BOT_TOKEN` in `env_vars`, because Codex starts that process from an allowlist. The Claude settings file turns on the project MCP server. Headless `claude -p` does not show the trust prompt. The proxy posts each JSON-RPC request to `/mcp` with the bot token. An accepted notification (HTTP 202) produces no stdout line. `ping` returns an empty result. Claude Code and Codex can then call the same `send_to_agent` tool the stub calls.
 
 ## Bus and MCP
 

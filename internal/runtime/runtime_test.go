@@ -133,8 +133,78 @@ func TestClaudeAndCodexCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(conf), "mcp-proxy") || !strings.Contains(string(conf), `cli_auth_credentials_store = "file"`) {
+	if !strings.Contains(string(conf), "mcp-proxy") || !strings.Contains(string(conf), `cli_auth_credentials_store = "file"`) || !strings.Contains(string(conf), "PVEBOT_BOT_TOKEN") {
 		t.Fatalf("codex config = %s", conf)
+	}
+	codexArgs, err := os.ReadFile(filepath.Join(home, "codex-args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(codexArgs), "exec --skip-git-repo-check review the diff") {
+		t.Fatalf("codex args = %q", codexArgs)
+	}
+	settings, err := os.ReadFile(filepath.Join(workdir, ".claude", "settings.local.json"))
+	if err != nil || !strings.Contains(string(settings), "enableAllProjectMcpServers") || !strings.Contains(string(settings), "mcp__pvebot__send_to_agent") {
+		t.Fatalf("claude settings = %s %v", settings, err)
+	}
+}
+
+func TestProxySkipsAcceptedNotification(t *testing.T) {
+	var sawPing bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Method == "notifications/initialized" {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		if req.Method == "ping" {
+			sawPing = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n"))
+			return
+		}
+		http.Error(w, "nope", http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	t.Setenv("PVEBOT_ORCHESTRATOR_URL", srv.URL)
+	t.Setenv("PVEBOT_BOT_TOKEN", "tok")
+	body, err := forwardMCP([]byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
+	if err != nil || len(body) != 0 {
+		t.Fatalf("notification body=%q err=%v", body, err)
+	}
+	body, err = forwardMCP([]byte(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	if err != nil || !bytes.Contains(body, []byte(`"result"`)) || !sawPing {
+		t.Fatalf("ping body=%q err=%v saw=%v", body, err, sawPing)
+	}
+}
+
+func TestOrchestratorAcceptsPingAndNotification(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "pvebot.db"), bytes32())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := httptest.NewServer(orch.NewHandler(&orch.Service{Store: st, Host: &memHost{}}))
+	defer srv.Close()
+	note, err := http.Post(srv.URL+"/mcp", "application/json", strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	note.Body.Close()
+	if note.StatusCode != http.StatusAccepted {
+		t.Fatalf("notification status %d", note.StatusCode)
+	}
+	ping, err := http.Post(srv.URL+"/mcp", "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ping.Body.Close()
+	buf, _ := io.ReadAll(ping.Body)
+	if ping.StatusCode != http.StatusOK || !bytes.Contains(buf, []byte(`"result"`)) {
+		t.Fatalf("ping status %d body %s", ping.StatusCode, buf)
 	}
 }
 

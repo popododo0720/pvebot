@@ -544,6 +544,9 @@ func ensureMCP(cfg Config) error {
 	if err := os.WriteFile(filepath.Join(cfg.Workdir, ".mcp.json"), append(raw, '\n'), 0o644); err != nil {
 		return err
 	}
+	if err := writeClaudeSettings(cfg); err != nil {
+		return err
+	}
 	home, err := cliHome(cfg)
 	if err != nil {
 		return err
@@ -556,12 +559,34 @@ func ensureMCP(cfg Config) error {
 		return err
 	}
 	// "auto" uses the keyring first. A pod has none, so Codex would ignore auth.json.
-	body := fmt.Sprintf("cli_auth_credentials_store = \"file\"\n\n[mcp_servers.pvebot]\ncommand = %q\nargs = [\"mcp-proxy\"]\n", exe)
+	// Codex starts the MCP process from an env allowlist. Without env_vars the proxy
+	// cannot see the orchestrator URL or the bot token.
+	body := fmt.Sprintf("cli_auth_credentials_store = \"file\"\n\n[mcp_servers.pvebot]\ncommand = %q\nargs = [\"mcp-proxy\"]\nenv_vars = [\"PVEBOT_ORCHESTRATOR_URL\", \"PVEBOT_BOT_TOKEN\", \"PVEBOT_BOT_ID\", \"PVEBOT_WORKDIR\"]\n", exe)
 	path := filepath.Join(dir, "config.toml")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		return err
 	}
 	return chownCLI(path)
+}
+
+func writeClaudeSettings(cfg Config) error {
+	// Headless claude does not show the project-MCP trust prompt, so the server stays off.
+	doc := map[string]any{
+		"enableAllProjectMcpServers": true,
+		"enabledMcpjsonServers":      []string{"pvebot"},
+		"permissions": map[string]any{
+			"allow": []string{"mcp__pvebot__send_to_agent"},
+		},
+	}
+	raw, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(cfg.Workdir, ".claude")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "settings.local.json"), append(raw, '\n'), 0o644)
 }
 
 func serveHealth(ctx context.Context, addr string) {
@@ -685,7 +710,10 @@ func Proxy() int {
 			fmt.Fprintf(os.Stdout, "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":%q}}\n", err.Error())
 			continue
 		}
-		if len(resp) == 0 || resp[len(resp)-1] != '\n' {
+		if len(resp) == 0 {
+			continue
+		}
+		if resp[len(resp)-1] != '\n' {
 			resp = append(resp, '\n')
 		}
 		_, _ = os.Stdout.Write(resp)
@@ -713,6 +741,9 @@ func forwardMCP(line []byte) ([]byte, error) {
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, err
+	}
+	if resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusNoContent {
+		return nil, nil
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("mcp status %d: %s", resp.StatusCode, bytes.TrimSpace(body))

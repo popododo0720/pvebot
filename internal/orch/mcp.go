@@ -34,6 +34,8 @@ func (h *Handler) mcp(w http.ResponseWriter, r *http.Request) {
 	case "notifications/initialized", "initialized":
 		w.WriteHeader(http.StatusAccepted)
 		return
+	case "ping":
+		resp.Result = map[string]any{}
 	case "tools/list":
 		resp.Result = map[string]any{"tools": []any{sendTool()}}
 	case "tools/call":
