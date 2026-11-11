@@ -151,7 +151,6 @@ func (c *Client) statefulSet(spec host.Spec) *appsv1.StatefulSet {
 			Env:             envVars(spec, c.cfg, name),
 			Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: 8081}},
 			VolumeMounts:    volumeMounts(spec),
-			// Cilium native routing classifies kubelet HTTP probes as world from cilium_host.
 			ReadinessProbe: &corev1.Probe{
 				ProbeHandler: corev1.ProbeHandler{
 					Exec: &corev1.ExecAction{Command: []string{

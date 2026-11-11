@@ -59,7 +59,6 @@ fi
 
 kubectl config use-context "kind-${CLUSTER}"
 if [[ "$ROUTING_MODE" == native ]]; then
-  # Bot pods do not tolerate the control-plane NoSchedule taint, and this cluster has no worker.
   kubectl taint nodes --all node-role.kubernetes.io/control-plane:NoSchedule- >/dev/null 2>&1 || true
 fi
 CP="$(kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep control-plane | head -n1)"
