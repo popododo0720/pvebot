@@ -1,0 +1,26 @@
+{{define "head"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · pvebot</title>
+<link rel="stylesheet" href="/static/app.css">
+{{if .Refresh}}<meta http-equiv="refresh" content="3">{{end}}
+</head>
+<body>
+<header>
+<a class="brand" href="/">pvebot</a>
+<nav>
+<a href="/bots/new">New bot</a>
+<a href="/accounts">Accounts</a>
+</nav>
+</header>
+<main>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+{{end}}
+
+{{define "foot"}}
+</main>
+</body>
+</html>
+{{end}}

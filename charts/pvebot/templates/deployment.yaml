@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "pvebot.fullname" . }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pvebot
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pvebot
+    spec:
+      serviceAccountName: {{ include "pvebot.fullname" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: orchestrator
+          image: {{ .Values.image.orchestrator }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: PVEBOT_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "pvebot.fullname" . }}-master
+                  key: key
+          args:
+            - --listen=:8080
+            - --data=/data
+            - --namespace={{ .Release.Namespace }}
+            - --bot-image={{ .Values.image.bot }}
+            - --orch-url=http://{{ include "pvebot.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+            - --storage-size={{ .Values.storageSize }}
+            {{- with .Values.storageClass }}
+            - --storage-class={{ . }}
+            {{- end }}
+            {{- with .Values.runtimeClassName }}
+            - --runtime-class={{ . }}
+            {{- end }}
+            - --egress-fqdns={{ join "," .Values.egressFQDNs }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "pvebot.fullname" . }}-data

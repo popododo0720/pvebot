@@ -1,0 +1,29 @@
+{{define "newbot"}}
+{{template "head" .}}
+<h1>New bot</h1>
+<form method="post" action="/bots">
+<label>Name <input name="name" required pattern="[a-z]([-a-z0-9]*[a-z0-9])?" maxlength="40"></label>
+<label>Node
+<select name="node">
+<option value="">Any node</option>
+{{range .Nodes}}<option value="{{.}}">{{.}}</option>{{end}}
+</select>
+</label>
+<label>Backend
+<select name="backend">
+<option value="stub">stub</option>
+<option value="claude">claude</option>
+<option value="codex">codex</option>
+<option value="apikey">apikey</option>
+</select>
+</label>
+<label>Account
+<select name="account">
+<option value="">None</option>
+{{range .Accounts}}<option value="{{.Name}}">{{.Name}} ({{.Kind}})</option>{{end}}
+</select>
+</label>
+<button type="submit">Create bot</button>
+</form>
+{{template "foot" .}}
+{{end}}
