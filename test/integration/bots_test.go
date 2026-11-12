@@ -55,6 +55,9 @@ func TestTwoBotsMessageAndNetworkPolicy(t *testing.T) {
 		mustKubectl(t, "get", "pvc", "-n", ns, "workspace-bot-"+name+"-0")
 		mustKubectl(t, "get", "networkpolicy", "-n", ns, "bot-"+name)
 		mustKubectl(t, "get", "ciliumnetworkpolicy", "-n", ns, "bot-"+name)
+		if os.Getenv("PVEBOT_FQDN_EGRESS") == "false" {
+			assertL4CiliumPolicy(t, ns, "bot-"+name)
+		}
 	}
 
 	postJSON(t, base+"/api/bots/a/messages", map[string]string{"body": "SEND b hello"}, http.StatusAccepted)
@@ -70,6 +73,47 @@ func TestTwoBotsMessageAndNetworkPolicy(t *testing.T) {
 	orchURL := fmt.Sprintf("http://%s.%s.svc:8080/healthz", svc, ns)
 	if err := eventuallyAllowed(t, ns, "bot-a-0", orchURL); err != nil {
 		t.Fatalf("bot A could not reach the orchestrator: %v", err)
+	}
+}
+
+func assertL4CiliumPolicy(t *testing.T, ns, name string) {
+	t.Helper()
+	cnp := kubectlJSON(t, "get", "ciliumnetworkpolicy", "-n", ns, name)
+	spec, _ := cnp["spec"].(map[string]any)
+	egress, _ := spec["egress"].([]any)
+	if len(egress) == 0 {
+		t.Fatalf("cilium policy %s has no egress: %#v", name, spec)
+	}
+	var saw53UDP, saw53TCP, saw8080 bool
+	for _, rule := range egress {
+		m, _ := rule.(map[string]any)
+		if _, ok := m["toFQDNs"]; ok {
+			t.Fatalf("cilium policy %s has toFQDNs: %#v", name, m)
+		}
+		ports, _ := m["toPorts"].([]any)
+		for _, p := range ports {
+			pm, _ := p.(map[string]any)
+			if _, ok := pm["rules"]; ok {
+				t.Fatalf("cilium policy %s has L7 port rules: %#v", name, pm)
+			}
+			entries, _ := pm["ports"].([]any)
+			for _, e := range entries {
+				em, _ := e.(map[string]any)
+				port := fmt.Sprint(em["port"])
+				proto := fmt.Sprint(em["protocol"])
+				switch {
+				case port == "53" && proto == "UDP":
+					saw53UDP = true
+				case port == "53" && proto == "TCP":
+					saw53TCP = true
+				case port == "8080" && proto == "TCP":
+					saw8080 = true
+				}
+			}
+		}
+	}
+	if !saw53UDP || !saw53TCP || !saw8080 {
+		t.Fatalf("cilium policy %s ports udp53=%v tcp53=%v orchestrator=%v spec=%#v", name, saw53UDP, saw53TCP, saw8080, spec)
 	}
 }
 

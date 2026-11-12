@@ -11,6 +11,7 @@ HELM_VERSION="${HELM_VERSION:-v3.16.4}"
 CILIUM_VERSION="${CILIUM_VERSION:-1.16.5}"
 NODE_IMAGE="${NODE_IMAGE:-kindest/node:v1.31.4}"
 ROUTING_MODE="${ROUTING_MODE:-tunnel}"
+FQDN_EGRESS="${FQDN_EGRESS:-true}"
 
 install_tool() {
   local name="$1"
@@ -110,6 +111,7 @@ EOF
 helm upgrade --install pvebot charts/pvebot \
   --namespace pvebot --create-namespace \
   -f /tmp/pvebot-values.yaml \
+  --set networkPolicy.fqdnEgress.enabled="${FQDN_EGRESS}" \
   --wait --timeout 180s
 
 kubectl -n pvebot port-forward svc/pvebot 30080:8080 >/tmp/pvebot-pf.log 2>&1 &
@@ -123,4 +125,4 @@ for _ in $(seq 1 40); do
 done
 curl -sf http://127.0.0.1:30080/healthz >/dev/null
 
-PVEBOT_URL=http://127.0.0.1:30080 go test -tags=integration -count=1 -timeout 20m ./test/integration
+PVEBOT_URL=http://127.0.0.1:30080 PVEBOT_FQDN_EGRESS="${FQDN_EGRESS}" go test -tags=integration -count=1 -timeout 20m ./test/integration

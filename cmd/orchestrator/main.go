@@ -25,6 +25,7 @@ func main() {
 	storageClass := flag.String("storage-class", "", "StorageClass for bot volumes, empty for the default")
 	storageSize := flag.String("storage-size", "1Gi", "bot workspace volume size")
 	fqdn := flag.String("egress-fqdns", "api.anthropic.com,github.com,api.openai.com", "comma-separated FQDN egress allow list")
+	fqdnEgress := flag.Bool("fqdn-egress", true, "allow FQDN egress through the Cilium DNS proxy; false is L3/L4 DNS and the orchestrator only")
 	flag.Parse()
 
 	key, err := parseKey(os.Getenv("PVEBOT_MASTER_KEY"))
@@ -50,6 +51,10 @@ func main() {
 			fqdns = append(fqdns, name)
 		}
 	}
+	dnsEgress := kubernetes.DNSEgressFQDN
+	if !*fqdnEgress {
+		dnsEgress = kubernetes.DNSEgressL4
+	}
 	client, err := kubernetes.New(kubernetes.Config{
 		Namespace:       *namespace,
 		BotImage:        *botImage,
@@ -58,6 +63,7 @@ func main() {
 		StorageClass:    *storageClass,
 		StorageSize:     *storageSize,
 		EgressFQDNs:     fqdns,
+		DNSEgress:       dnsEgress,
 	}, kube, dyn)
 	if err != nil {
 		log.Fatal(err)

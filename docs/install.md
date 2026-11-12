@@ -37,7 +37,7 @@ Each bot has two policy objects.
 
 The Kubernetes `NetworkPolicy` allows egress to the orchestrator pod on TCP 8080 and to DNS in `kube-system` on port 53. Ingress is denied.
 
-The `CiliumNetworkPolicy` allows those same paths and adds TCP 443 to the names in `egressFQDNs`. The orchestrator match uses the label `app.kubernetes.io/name=pvebot`. The chart sets that label on the orchestrator pod. DNS is matched as `k8s-app=kube-dns` in `kube-system`. FQDN rules use `toFQDNs`, which needs Cilium's DNS proxy. Cilium turns that proxy on for a policy that uses `toFQDNs`. Leave it on.
+The `CiliumNetworkPolicy` allows those same paths and, by default, TCP 443 to the names in `egressFQDNs`. The orchestrator match uses the label `app.kubernetes.io/name=pvebot`. The chart sets that label on the orchestrator pod. DNS is matched as `k8s-app=kube-dns` in `kube-system`. The default FQDN rules use `toFQDNs`, which needs Cilium's DNS proxy. Cilium turns that proxy on for a policy that uses `toFQDNs`.
 
 CI installs Cilium 1.16.5 with `kubeProxyReplacement=true` because kind in `hack/kind-ci.sh` has no kube-proxy. On a cluster that still runs kube-proxy, install Cilium without copying the kind `k8sServiceHost` settings.
 
@@ -60,6 +60,48 @@ kubectl -n kube-system get pods -l k8s-app=kube-dns
 ```
 
 The second command must list the DNS pods. If it lists nothing, the bot policy cannot name your DNS and name lookup from a bot fails.
+
+## Disable FQDN egress
+
+Some node kernels are built without the netfilter targets Cilium's DNS proxy needs. cilium-agent then logs `cannot install static proxy rules` and `-j CT --notrack`, or `Extension CT revision 0 not supported`. Bots cannot resolve the orchestrator Service, and a message stays pending. A direct IP connection to the orchestrator still works.
+
+The `-j CT --notrack` rule needs `CONFIG_NETFILTER_XT_TARGET_CT`. The proxy also needs `CONFIG_NETFILTER_XT_TARGET_TPROXY` and `CONFIG_NETFILTER_XT_MATCH_SOCKET`. `--notrack` is an option of the CT target. It is not a separate `CONFIG_NETFILTER_XT_TARGET_NOTRACK` option.
+
+On a node, read the kernel config.
+
+```bash
+zcat /proc/config.gz | grep -E 'CONFIG_NETFILTER_XT_TARGET_CT|CONFIG_NETFILTER_XT_TARGET_TPROXY|CONFIG_NETFILTER_XT_MATCH_SOCKET'
+```
+
+If `/proc/config.gz` is missing, read `/boot/config-$(uname -r)` with the same grep. Each line should end in `=y` or `=m`. A line that says `is not set`, or a name that the grep does not print, means the proxy cannot install.
+
+Read the agent log from a machine with `kubectl`.
+
+```bash
+kubectl -n kube-system logs -l k8s-app=cilium --tail=200 | grep -E 'CT --notrack|Extension CT revision 0 not supported'
+```
+
+Any match means the same thing. Upgrade the release and keep the existing values, including `masterKey`.
+
+```bash
+helm upgrade pvebot charts/pvebot \
+  --namespace pvebot \
+  --reuse-values \
+  --set networkPolicy.fqdnEgress.enabled=false \
+  --wait --timeout 180s
+```
+
+You can also set the key in the values file.
+
+```yaml
+networkPolicy:
+  fqdnEgress:
+    enabled: false
+```
+
+The generated CiliumNetworkPolicy then allows the orchestrator on TCP 8080 and kube-dns on UDP 53 and TCP 53. It has no `rules.dns` entry and no `toFQDNs` entry. Names in `egressFQDNs` are not installed. A bot cannot dial the public internet in this setting. The chart does not add a CIDR allow list to replace those names. Bot-to-bot traffic stays denied. The Kubernetes NetworkPolicy is unchanged.
+
+Bots created before the upgrade keep the old policy. Delete those bots and create them again.
 
 ## Install Kata and choose a RuntimeClass
 
@@ -173,4 +215,6 @@ These are the keys in `charts/pvebot/values.yaml`. Defaults are the file content
 
 `masterKey` is required. It is 32 bytes of standard base64, passed to the orchestrator as `PVEBOT_MASTER_KEY`.
 
-`egressFQDNs` is the list of names a bot may dial on TCP 443. The default is `api.anthropic.com`, `github.com`, `api.openai.com`, `auth.openai.com`, and `chatgpt.com`. An empty list omits that rule. Bots can still reach the orchestrator and DNS.
+`egressFQDNs` is the list of names a bot may dial on TCP 443 when `networkPolicy.fqdnEgress.enabled` is true. The default is `api.anthropic.com`, `github.com`, `api.openai.com`, `auth.openai.com`, and `chatgpt.com`. An empty list omits that rule. Bots can still reach the orchestrator and DNS. When FQDN egress is disabled, the list is ignored.
+
+`networkPolicy.fqdnEgress.enabled` defaults to true. True installs `toFQDNs` and the Cilium DNS proxy rule. False allows only L3/L4 egress to kube-dns and the orchestrator. The kernel check is under Disable FQDN egress.

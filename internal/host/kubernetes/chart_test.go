@@ -30,3 +30,25 @@ func TestChartUsesOrchestratorLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestChartPlumbsFQDNEgress(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("caller")
+	}
+	root := filepath.Join(filepath.Dir(file), "..", "..", "..")
+	deploy, err := os.ReadFile(filepath.Join(root, "charts/pvebot/templates/deployment.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(deploy), "--fqdn-egress={{ .Values.networkPolicy.fqdnEgress.enabled }}") {
+		t.Fatal("deployment does not pass networkPolicy.fqdnEgress.enabled")
+	}
+	values, err := os.ReadFile(filepath.Join(root, "charts/pvebot/values.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(values), "fqdnEgress:") || !strings.Contains(string(values), "enabled: true") {
+		t.Fatalf("values.yaml default is not fqdn egress enabled:\n%s", values)
+	}
+}
