@@ -1,6 +1,7 @@
 package kubernetes
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -133,6 +134,157 @@ func TestCreateKataPodPolicyAndSecretRef(t *testing.T) {
 	if string(sec.Data[host.KeyClaudeToken]) != "oauth-secret" {
 		t.Fatal("secret missing claude token")
 	}
+}
+
+func TestCiliumPolicyEgressModes(t *testing.T) {
+	fqdn, _ := loadCiliumPolicy(t, baseCfg())
+	if len(fqdn.Spec.Ingress) != 0 {
+		t.Fatalf("ingress = %d, want none", len(fqdn.Spec.Ingress))
+	}
+	if len(fqdn.Spec.Egress) != 3 {
+		t.Fatalf("fqdn egress rules = %d, want orchestrator, dns proxy, toFQDNs", len(fqdn.Spec.Egress))
+	}
+	if !hasPort(fqdn, "8080", "TCP") {
+		t.Fatalf("fqdn policy missing orchestrator: %#v", fqdn.Spec.Egress)
+	}
+	if !hasDNSProxy(fqdn) {
+		t.Fatalf("fqdn policy missing dns proxy rule: %#v", fqdn.Spec.Egress)
+	}
+	names := fqdnNames(fqdn)
+	if strings.Join(names, ",") != "api.anthropic.com,github.com" {
+		t.Fatalf("toFQDNs = %v", names)
+	}
+
+	empty := baseCfg()
+	empty.EgressFQDNs = nil
+	noNames, _ := loadCiliumPolicy(t, empty)
+	if len(noNames.Spec.Egress) != 2 || !hasDNSProxy(noNames) || len(fqdnNames(noNames)) != 0 {
+		t.Fatalf("empty allow list = %#v", noNames.Spec.Egress)
+	}
+
+	l4cfg := baseCfg()
+	l4cfg.DNSEgress = DNSEgressL4
+	l4, raw := loadCiliumPolicy(t, l4cfg)
+	body := string(raw)
+	if strings.Contains(body, "toFQDNs") || strings.Contains(body, `"dns"`) || strings.Contains(body, "matchPattern") {
+		t.Fatalf("L4 policy still has L7 DNS or toFQDNs: %s", body)
+	}
+	if len(l4.Spec.Ingress) != 0 {
+		t.Fatalf("L4 ingress = %d, want none", len(l4.Spec.Ingress))
+	}
+	if len(l4.Spec.Egress) != 2 {
+		t.Fatalf("L4 egress rules = %d, want orchestrator and kube-dns", len(l4.Spec.Egress))
+	}
+	if !hasPort(l4, "8080", "TCP") || !hasPort(l4, "53", "UDP") || !hasPort(l4, "53", "TCP") {
+		t.Fatalf("L4 ports = %#v", l4.Spec.Egress)
+	}
+	if !bytes.Equal(networkPolicySpec(t, baseCfg()), networkPolicySpec(t, l4cfg)) {
+		t.Fatal("L4 mode changed the Kubernetes NetworkPolicy")
+	}
+}
+
+func loadCiliumPolicy(t *testing.T, cfg Config) (ciliumPolicyDoc, []byte) {
+	t.Helper()
+	c, _, dyn := testClient(t, cfg)
+	ctx := context.Background()
+	if err := c.Create(ctx, host.Spec{
+		Name: "alpha", Backend: "stub", Secret: map[string][]byte{host.KeyBotToken: []byte("t")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	obj, err := dyn.Resource(CiliumNetworkPolicyGVR).Namespace("pvebot").Get(ctx, "bot-alpha", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(obj.Object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc ciliumPolicyDoc
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	return doc, raw
+}
+
+func networkPolicySpec(t *testing.T, cfg Config) []byte {
+	t.Helper()
+	c, kube, _ := testClient(t, cfg)
+	ctx := context.Background()
+	if err := c.Create(ctx, host.Spec{
+		Name: "alpha", Backend: "stub", Secret: map[string][]byte{host.KeyBotToken: []byte("t")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	np, err := kube.NetworkingV1().NetworkPolicies("pvebot").Get(ctx, "bot-alpha", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(np.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+type ciliumPolicyDoc struct {
+	Spec struct {
+		Ingress []json.RawMessage `json:"ingress"`
+		Egress  []ciliumEgress    `json:"egress"`
+	} `json:"spec"`
+}
+
+type ciliumEgress struct {
+	ToFQDNs []struct {
+		MatchName string `json:"matchName"`
+	} `json:"toFQDNs"`
+	ToPorts []struct {
+		Ports []struct {
+			Port     string `json:"port"`
+			Protocol string `json:"protocol"`
+		} `json:"ports"`
+		Rules struct {
+			DNS []struct {
+				MatchPattern string `json:"matchPattern"`
+			} `json:"dns"`
+		} `json:"rules"`
+	} `json:"toPorts"`
+}
+
+func hasPort(doc ciliumPolicyDoc, port, protocol string) bool {
+	for _, rule := range doc.Spec.Egress {
+		for _, tp := range rule.ToPorts {
+			for _, p := range tp.Ports {
+				if p.Port == port && p.Protocol == protocol {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func hasDNSProxy(doc ciliumPolicyDoc) bool {
+	for _, rule := range doc.Spec.Egress {
+		for _, tp := range rule.ToPorts {
+			for _, dns := range tp.Rules.DNS {
+				if dns.MatchPattern == "*" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func fqdnNames(doc ciliumPolicyDoc) []string {
+	var names []string
+	for _, rule := range doc.Spec.Egress {
+		for _, name := range rule.ToFQDNs {
+			names = append(names, name.MatchName)
+		}
+	}
+	return names
 }
 
 func TestRuntimeClassOmittedAndCodexMount(t *testing.T) {

@@ -27,6 +27,13 @@ import (
 
 var CiliumNetworkPolicyGVR = schema.GroupVersionResource{Group: "cilium.io", Version: "v2", Resource: "ciliumnetworkpolicies"}
 
+type DNSEgress int
+
+const (
+	DNSEgressFQDN DNSEgress = iota
+	DNSEgressL4
+)
+
 type Config struct {
 	Namespace       string
 	BotImage        string
@@ -36,6 +43,7 @@ type Config struct {
 	StorageClass    string
 	StorageSize     string
 	EgressFQDNs     []string
+	DNSEgress       DNSEgress
 }
 
 type Client struct {
@@ -299,10 +307,6 @@ func (c *Client) networkPolicy(spec host.Spec) *networkingv1.NetworkPolicy {
 }
 
 func (c *Client) ciliumPolicy(spec host.Spec) *unstructured.Unstructured {
-	fqdns := make([]any, 0, len(c.cfg.EgressFQDNs))
-	for _, name := range c.cfg.EgressFQDNs {
-		fqdns = append(fqdns, map[string]any{"matchName": name})
-	}
 	egress := []any{
 		map[string]any{
 			"toEndpoints": []any{map[string]any{"matchLabels": map[string]any{
@@ -311,7 +315,20 @@ func (c *Client) ciliumPolicy(spec host.Spec) *unstructured.Unstructured {
 			}}},
 			"toPorts": []any{map[string]any{"ports": []any{map[string]any{"port": "8080", "protocol": "TCP"}}}},
 		},
-		map[string]any{
+	}
+	if c.cfg.DNSEgress == DNSEgressL4 {
+		egress = append(egress, map[string]any{
+			"toEndpoints": []any{map[string]any{"matchLabels": map[string]any{
+				"k8s:io.kubernetes.pod.namespace": "kube-system",
+				"k8s-app":                         "kube-dns",
+			}}},
+			"toPorts": []any{map[string]any{"ports": []any{
+				map[string]any{"port": "53", "protocol": "UDP"},
+				map[string]any{"port": "53", "protocol": "TCP"},
+			}}},
+		})
+	} else {
+		egress = append(egress, map[string]any{
 			"toEndpoints": []any{map[string]any{"matchLabels": map[string]any{
 				"k8s:io.kubernetes.pod.namespace": "kube-system",
 				"k8s-app":                         "kube-dns",
@@ -320,13 +337,17 @@ func (c *Client) ciliumPolicy(spec host.Spec) *unstructured.Unstructured {
 				"ports": []any{map[string]any{"port": "53", "protocol": "ANY"}},
 				"rules": map[string]any{"dns": []any{map[string]any{"matchPattern": "*"}}},
 			}},
-		},
-	}
-	if len(fqdns) > 0 {
-		egress = append(egress, map[string]any{
-			"toFQDNs": fqdns,
-			"toPorts": []any{map[string]any{"ports": []any{map[string]any{"port": "443", "protocol": "TCP"}}}},
 		})
+		fqdns := make([]any, 0, len(c.cfg.EgressFQDNs))
+		for _, name := range c.cfg.EgressFQDNs {
+			fqdns = append(fqdns, map[string]any{"matchName": name})
+		}
+		if len(fqdns) > 0 {
+			egress = append(egress, map[string]any{
+				"toFQDNs": fqdns,
+				"toPorts": []any{map[string]any{"ports": []any{map[string]any{"port": "443", "protocol": "TCP"}}}},
+			})
+		}
 	}
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "cilium.io/v2",
