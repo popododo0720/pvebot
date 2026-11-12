@@ -45,6 +45,7 @@ spec:
             - --runtime-class={{ . }}
             {{- end }}
             - --egress-fqdns={{ join "," .Values.egressFQDNs }}
+            - --fqdn-egress={{ .Values.networkPolicy.fqdnEgress.enabled }}
           readinessProbe:
             httpGet:
               path: /healthz

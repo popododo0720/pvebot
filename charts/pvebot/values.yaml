@@ -20,3 +20,7 @@ egressFQDNs:
   - api.openai.com
   - auth.openai.com
   - chatgpt.com
+
+networkPolicy:
+  fqdnEgress:
+    enabled: true
